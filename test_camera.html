@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Monitor AI - TESTE CÂMERA</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            padding: 20px;
+        }
+
+        h1 {
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        #video {
+            width: 90%;
+            max-width: 800px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        button {
+            margin: 20px;
+            padding: 15px 40px;
+            font-size: 18px;
+            background: #10B981;
+            border: none;
+            border-radius: 10px;
+            color: white;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background: #059669;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 15px 30px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🎥 TESTE DE CÂMERA REAL</h1>
+    <button onclick="startCamera()">▶️ INICIAR CÂMERA</button>
+    <video id="video" autoplay playsinline muted></video>
+    <div id="status">Clique no botão para iniciar</div>
+
+    <script>
+        async function startCamera() {
+            const video = document.getElementById('video');
+            const status = document.getElementById('status');
+
+            try {
+                status.textContent = '🔄 Solicitando permissão...';
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+
+                video.srcObject = stream;
+                status.textContent = '✅ CÂMERA FUNCIONANDO! Você está vendo vídeo AO VIVO!';
+                status.style.background = 'rgba(16, 185, 129, 0.3)';
+
+            } catch (error) {
+                status.textContent = '❌ ERRO: ' + error.message;
+                status.style.background = 'rgba(239, 68, 68, 0.3)';
+
+                if (error.name === 'NotAllowedError') {
+                    status.textContent += ' - Você precisa PERMITIR o acesso à câmera!';
+                }
+            }
+        }
+
+        // Detectar câmeras disponíveis
+        navigator.mediaDevices.enumerateDevices().then(devices => {
+            const cameras = devices.filter(d => d.kind === 'videoinput');
+            console.log(`${cameras.length} câmera(s) detectada(s):`, cameras);
+        });
+    </script>
+</body>
+
+</html>
