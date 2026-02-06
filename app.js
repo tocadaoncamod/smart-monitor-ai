@@ -6,16 +6,16 @@ const CONFIG = {
         { email: 'demo@smartmonitor.com', password: 'Demo@123456', name: 'Demo User' }
     ],
     geminiApiKey: 'AIzaSyDemoKey', // Substituir pela chave real
-    cameras: [
-        { id: 1, name: 'Câmera Principal', type: 'device', status: 'online' },
-        { id: 2, name: 'Câmera da Porta', type: 'ip', url: 'rtsp://example.com', status: 'online' },
-        { id: 3, name: 'Câmera da Garagem', type: 'ip', url: 'http://example.com', status: 'online' }
-    ]
+    cameras: [],
+    networkScanPorts: [80, 554, 8080, 8081, 8554, 5000, 5001], // Portas comuns de câmeras IP
+    commonCameraPaths: ['/video', '/stream', '/live', '/mjpeg', '/h264', '/onvif/device_service']
 };
 
 let currentUser = null;
 let isVoiceActive = false;
 let currentGrid = 2;
+let isScanning = false;
+let discoveredCameras = [];
 
 // Inicialização
 document.addEventListener('DOMContentLoaded', () => {
@@ -38,9 +38,9 @@ function handleLogin() {
     const email = document.getElementById('emailInput').value;
     const password = document.getElementById('passwordInput').value;
     const errorMsg = document.getElementById('errorMessage');
-    
+
     const user = CONFIG.users.find(u => u.email === email && u.password === password);
-    
+
     if (user) {
         currentUser = user;
         localStorage.setItem('currentUser', JSON.stringify(user));
@@ -87,14 +87,17 @@ function showHome() {
 function initCameras() {
     const grid = document.getElementById('cameraGrid');
     if (!grid) return;
-    
+
+    // Carregar câmeras salvas
+    loadCameras();
+
     grid.innerHTML = '';
-    
+
     CONFIG.cameras.forEach(camera => {
         const card = createCameraCard(camera);
         grid.appendChild(card);
     });
-    
+
     // Adicionar botão de adicionar câmera
     const addBtn = document.createElement('div');
     addBtn.className = 'camera-card add-camera';
@@ -104,10 +107,10 @@ function initCameras() {
                 <line x1="12" y1="5" x2="12" y2="19"></line>
                 <line x1="5" y1="12" x2="19" y2="12"></line>
             </svg>
-            <p>Adicionar Câmera IP</p>
+            <p>Buscar Câmeras Wi-Fi</p>
         </div>
     `;
-    addBtn.onclick = () => alert('Funcionalidade em desenvolvimento');
+    addBtn.onclick = () => showWiFiSettings();
     grid.appendChild(addBtn);
 }
 
@@ -140,7 +143,7 @@ function setGrid(size) {
     currentGrid = size;
     const grid = document.getElementById('cameraGrid');
     grid.className = `camera-grid grid-${size}x${size}`;
-    
+
     document.querySelectorAll('.btn-control').forEach(btn => btn.classList.remove('active'));
     event.target.classList.add('active');
 }
@@ -149,16 +152,16 @@ function setGrid(size) {
 async function analyzeAll() {
     const panel = document.getElementById('aiPanel');
     const response = document.getElementById('aiResponse');
-    
+
     panel.classList.add('active');
-    
+
     response.innerHTML = `
         <div class="ai-message analyzing">
             <div class="loader"></div>
             <p>Analisando câmeras com Google Gemini...</p>
         </div>
     `;
-    
+
     // Simular análise (em produção, chamar API Gemini)
     setTimeout(() => {
         const analysis = `
@@ -203,7 +206,7 @@ function toggleAIPanel() {
 function toggleVoice() {
     isVoiceActive = !isVoiceActive;
     const btn = document.querySelector('.voice-button');
-    
+
     if (isVoiceActive) {
         btn.classList.add('active');
         startVoiceRecognition();
@@ -217,16 +220,16 @@ function startVoiceRecognition() {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         const recognition = new SpeechRecognition();
-        
+
         recognition.lang = 'pt-BR';
         recognition.continuous = true;
         recognition.interimResults = false;
-        
+
         recognition.onresult = (event) => {
             const command = event.results[event.results.length - 1][0].transcript.toLowerCase();
             processVoiceCommand(command);
         };
-        
+
         recognition.start();
         window.voiceRecognition = recognition;
     } else {
@@ -243,7 +246,7 @@ function stopVoiceRecognition() {
 
 function processVoiceCommand(command) {
     console.log('Comando:', command);
-    
+
     if (command.includes('analisar')) {
         analyzeAll();
     } else if (command.includes('painel')) {
@@ -258,6 +261,353 @@ function processVoiceCommand(command) {
 
 // Utilitários
 function showNotification(message, type = 'info') {
-    // Implementar notificações toast
-    console.log(`[${type}] ${message}`);
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <div class="notification-content">
+            <span>${message}</span>
+            <button onclick="this.parentElement.parentElement.remove()">✕</button>
+        </div>
+    `;
+    document.body.appendChild(notification);
+
+    setTimeout(() => notification.remove(), 5000);
+}
+
+// ========================================
+// DESCOBERTA DE CÂMERAS NA REDE WI-FI
+// ========================================
+
+// Obter informações da rede local
+async function getNetworkInfo() {
+    try {
+        // Tentar obter IP local via WebRTC
+        const pc = new RTCPeerConnection({ iceServers: [] });
+        pc.createDataChannel('');
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        return new Promise((resolve) => {
+            pc.onicecandidate = (ice) => {
+                if (!ice || !ice.candidate || !ice.candidate.candidate) return;
+                const ipRegex = /([0-9]{1,3}(\.[0-9]{1,3}){3})/;
+                const match = ipRegex.exec(ice.candidate.candidate);
+                if (match) {
+                    pc.close();
+                    const localIP = match[1];
+                    const subnet = localIP.substring(0, localIP.lastIndexOf('.'));
+                    resolve({ localIP, subnet });
+                }
+            };
+        });
+    } catch (error) {
+        console.error('Erro ao obter IP local:', error);
+        return { localIP: '192.168.1.100', subnet: '192.168.1' }; // Fallback
+    }
+}
+
+// Scanner de rede para descobrir câmeras
+async function scanNetwork() {
+    if (isScanning) {
+        showNotification('Scanner já está em execução', 'warning');
+        return;
+    }
+
+    isScanning = true;
+    discoveredCameras = [];
+
+    showNotification('🔍 Iniciando busca por câmeras na rede...', 'info');
+    updateScanStatus('Obtendo informações da rede...');
+
+    const networkInfo = await getNetworkInfo();
+    const subnet = networkInfo.subnet;
+
+    updateScanStatus(`Escaneando rede ${subnet}.0/24...`);
+
+    // Escanear IPs de 1 a 254
+    const scanPromises = [];
+    for (let i = 1; i <= 254; i++) {
+        const ip = `${subnet}.${i}`;
+        scanPromises.push(scanDevice(ip));
+
+        // Processar em lotes de 20 para não sobrecarregar
+        if (i % 20 === 0) {
+            await Promise.all(scanPromises.splice(0, 20));
+            updateScanStatus(`Escaneando: ${i}/254 dispositivos verificados`);
+        }
+    }
+
+    // Aguardar conclusão de todos os scans
+    await Promise.all(scanPromises);
+
+    isScanning = false;
+
+    if (discoveredCameras.length > 0) {
+        showNotification(`✅ ${discoveredCameras.length} câmera(s) encontrada(s)!`, 'success');
+        showDiscoveredCameras();
+    } else {
+        showNotification('❌ Nenhuma câmera encontrada na rede', 'warning');
+        updateScanStatus('Nenhuma câmera detectada. Tente adicionar manualmente.');
+    }
+}
+
+// Escanear um dispositivo específico
+async function scanDevice(ip) {
+    const ports = CONFIG.networkScanPorts;
+
+    for (const port of ports) {
+        try {
+            const isCamera = await checkCameraPort(ip, port);
+            if (isCamera) {
+                const camera = {
+                    id: Date.now() + Math.random(),
+                    name: `Câmera ${ip}`,
+                    ip: ip,
+                    port: port,
+                    type: 'ip',
+                    protocol: port === 554 ? 'rtsp' : 'http',
+                    url: port === 554 ? `rtsp://${ip}:${port}/stream` : `http://${ip}:${port}/video`,
+                    status: 'online'
+                };
+                discoveredCameras.push(camera);
+                break; // Encontrou câmera neste IP, não precisa verificar outras portas
+            }
+        } catch (error) {
+            // Ignorar erros de conexão (dispositivo offline ou porta fechada)
+        }
+    }
+}
+
+// Verificar se uma porta específica tem uma câmera
+async function checkCameraPort(ip, port) {
+    return new Promise((resolve) => {
+        const timeout = 2000; // 2 segundos de timeout
+        const img = new Image();
+        const timer = setTimeout(() => {
+            img.src = '';
+            resolve(false);
+        }, timeout);
+
+        // Tentar carregar imagem de snapshot comum de câmeras
+        img.onload = () => {
+            clearTimeout(timer);
+            resolve(true);
+        };
+
+        img.onerror = () => {
+            clearTimeout(timer);
+            // Tentar verificar via fetch
+            fetch(`http://${ip}:${port}`, {
+                method: 'HEAD',
+                mode: 'no-cors',
+                signal: AbortSignal.timeout(timeout)
+            })
+                .then(() => resolve(true))
+                .catch(() => resolve(false));
+        };
+
+        // Tentar URLs comuns de snapshot
+        img.src = `http://${ip}:${port}/snapshot.jpg`;
+    });
+}
+
+// Atualizar status do scanner na UI
+function updateScanStatus(message) {
+    const statusElement = document.getElementById('scanStatus');
+    if (statusElement) {
+        statusElement.textContent = message;
+    }
+}
+
+// Mostrar câmeras descobertas
+function showDiscoveredCameras() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>🎥 Câmeras Encontradas (${discoveredCameras.length})</h3>
+                <button class="btn-icon" onclick="closeModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <p>Selecione as câmeras que deseja adicionar ao sistema:</p>
+                <div class="discovered-cameras-list">
+                    ${discoveredCameras.map((cam, index) => `
+                        <div class="discovered-camera-item">
+                            <input type="checkbox" id="cam-${index}" checked>
+                            <label for="cam-${index}">
+                                <strong>${cam.ip}:${cam.port}</strong>
+                                <span>${cam.protocol.toUpperCase()}</span>
+                            </label>
+                            <input type="text" placeholder="Nome da câmera" value="${cam.name}" 
+                                   onchange="discoveredCameras[${index}].name = this.value">
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" onclick="closeModal()">Cancelar</button>
+                <button class="btn-primary" onclick="addSelectedCameras()">
+                    Adicionar Selecionadas
+                </button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+// Adicionar câmeras selecionadas
+function addSelectedCameras() {
+    const checkboxes = document.querySelectorAll('.discovered-camera-item input[type="checkbox"]');
+    let addedCount = 0;
+
+    checkboxes.forEach((checkbox, index) => {
+        if (checkbox.checked) {
+            CONFIG.cameras.push(discoveredCameras[index]);
+            addedCount++;
+        }
+    });
+
+    closeModal();
+    initCameras();
+
+    showNotification(`✅ ${addedCount} câmera(s) adicionada(s) com sucesso!`, 'success');
+
+    // Salvar no localStorage
+    saveCameras();
+}
+
+// Salvar câmeras no localStorage
+function saveCameras() {
+    localStorage.setItem('cameras', JSON.stringify(CONFIG.cameras));
+}
+
+// Carregar câmeras do localStorage
+function loadCameras() {
+    const saved = localStorage.getItem('cameras');
+    if (saved) {
+        CONFIG.cameras = JSON.parse(saved);
+    }
+}
+
+// Fechar modal
+function closeModal() {
+    const modal = document.querySelector('.modal');
+    if (modal) {
+        modal.remove();
+    }
+}
+
+// Mostrar modal de configuração de Wi-Fi
+function showWiFiSettings() {
+    const modal = document.createElement('div');
+    modal.className = 'modal active';
+    modal.innerHTML = `
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📡 Configuração de Rede</h3>
+                <button class="btn-icon" onclick="closeModal()">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="wifi-info">
+                    <p><strong>Status da Conexão:</strong></p>
+                    <div class="status-indicator online">
+                        <svg class="status-icon" viewBox="0 0 24 24" fill="currentColor">
+                            <circle cx="12" cy="12" r="10"></circle>
+                        </svg>
+                        <span>Conectado à Rede Local</span>
+                    </div>
+                    <p id="networkInfoDisplay" style="margin-top: 15px; font-size: 14px; opacity: 0.8;">
+                        Detectando informações da rede...
+                    </p>
+                </div>
+                <div class="scan-section">
+                    <h4>🔍 Buscar Câmeras na Rede</h4>
+                    <p>O sistema irá escanear sua rede local em busca de câmeras IP compatíveis.</p>
+                    <p id="scanStatus" class="scan-status"></p>
+                    <button class="btn-primary" onclick="scanNetwork()" ${isScanning ? 'disabled' : ''}>
+                        ${isScanning ? '⏳ Escaneando...' : '🔍 Iniciar Busca'}
+                    </button>
+                </div>
+                <div class="manual-add-section">
+                    <h4>➕ Adicionar Câmera Manualmente</h4>
+                    <div class="input-group">
+                        <label>Endereço IP:</label>
+                        <input type="text" id="manualIP" placeholder="192.168.1.100">
+                    </div>
+                    <div class="input-group">
+                        <label>Porta:</label>
+                        <input type="number" id="manualPort" placeholder="554" value="554">
+                    </div>
+                    <div class="input-group">
+                        <label>Protocolo:</label>
+                        <select id="manualProtocol">
+                            <option value="rtsp">RTSP</option>
+                            <option value="http">HTTP</option>
+                        </select>
+                    </div>
+                    <div class="input-group">
+                        <label>Nome:</label>
+                        <input type="text" id="manualName" placeholder="Minha Câmera">
+                    </div>
+                    <button class="btn-secondary" onclick="addManualCamera()">
+                        Adicionar Câmera
+                    </button>
+                </div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    // Obter e exibir informações da rede
+    getNetworkInfo().then(info => {
+        const display = document.getElementById('networkInfoDisplay');
+        if (display) {
+            display.innerHTML = `
+                <strong>IP Local:</strong> ${info.localIP}<br>
+                <strong>Sub-rede:</strong> ${info.subnet}.0/24
+            `;
+        }
+    });
+}
+
+// Adicionar câmera manualmente
+function addManualCamera() {
+    const ip = document.getElementById('manualIP').value;
+    const port = document.getElementById('manualPort').value;
+    const protocol = document.getElementById('manualProtocol').value;
+    const name = document.getElementById('manualName').value || `Câmera ${ip}`;
+
+    if (!ip) {
+        showNotification('Por favor, insira o endereço IP', 'warning');
+        return;
+    }
+
+    const camera = {
+        id: Date.now(),
+        name: name,
+        ip: ip,
+        port: port,
+        type: 'ip',
+        protocol: protocol,
+        url: protocol === 'rtsp' ? `rtsp://${ip}:${port}/stream` : `http://${ip}:${port}/video`,
+        status: 'online'
+    };
+
+    CONFIG.cameras.push(camera);
+    saveCameras();
+    initCameras();
+    closeModal();
+
+    showNotification(`✅ Câmera "${name}" adicionada com sucesso!`, 'success');
 }
