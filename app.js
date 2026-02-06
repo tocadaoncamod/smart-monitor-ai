@@ -20,8 +20,93 @@ let discoveredCameras = [];
 // Inicialização
 document.addEventListener('DOMContentLoaded', () => {
     checkAuth();
-    initCameras();
+    detectAndAddLocalCameras();
 });
+
+// Detectar e adicionar câmeras locais automaticamente
+async function detectAndAddLocalCameras() {
+    try {
+        // Solicitar permissão para acessar câmeras
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+        if (videoDevices.length > 0) {
+            // Verificar se já existem câmeras locais adicionadas
+            const existingLocalCameras = CONFIG.cameras.filter(c => c.type === 'device');
+
+            // Adicionar apenas câmeras que ainda não existem
+            videoDevices.forEach((device, index) => {
+                const exists = existingLocalCameras.some(c => c.deviceId === device.deviceId);
+
+                if (!exists) {
+                    const cameraName = device.label || `Câmera ${index + 1}`;
+                    CONFIG.cameras.push({
+                        id: Date.now() + index,
+                        name: cameraName,
+                        type: 'device',
+                        deviceId: device.deviceId,
+                        status: 'online'
+                    });
+                }
+            });
+
+            saveCameras();
+        }
+    } catch (error) {
+        console.log('Não foi possível detectar câmeras locais:', error);
+    }
+}
+
+// Atualizar status da câmera
+function updateCameraStatus(cameraId, status) {
+    const camera = CONFIG.cameras.find(c => c.id === cameraId);
+    if (camera) {
+        camera.status = status;
+    }
+
+    const statusElement = document.querySelector(`[data-camera-id="${cameraId}"] .camera-status`);
+    if (statusElement) {
+        statusElement.className = `camera-status ${status}`;
+    }
+}
+
+// Atualizar timestamp
+function updateTimestamp(cameraId) {
+    const timestampElement = document.getElementById(`timestamp-${cameraId}`);
+    if (timestampElement) {
+        const updateTime = () => {
+            const now = new Date();
+            timestampElement.textContent = now.toLocaleTimeString('pt-BR');
+        };
+
+        updateTime();
+        setInterval(updateTime, 1000);
+    }
+}
+
+// Remover câmera
+function removeCamera(cameraId) {
+    const camera = CONFIG.cameras.find(c => c.id === cameraId);
+
+    if (camera) {
+        // Parar stream se estiver ativo
+        if (camera.stream) {
+            camera.stream.getTracks().forEach(track => track.stop());
+        }
+
+        // Parar interval de snapshot
+        if (camera.snapshotInterval) {
+            clearInterval(camera.snapshotInterval);
+        }
+
+        // Remover do array
+        CONFIG.cameras = CONFIG.cameras.filter(c => c.id !== cameraId);
+        saveCameras();
+        initCameras();
+
+        showNotification(`Câmera "${camera.name}" removida`, 'info');
+    }
+}
 
 // Autenticação
 function checkAuth() {
@@ -117,26 +202,171 @@ function initCameras() {
 function createCameraCard(camera) {
     const card = document.createElement('div');
     card.className = 'camera-card';
+    card.dataset.cameraId = camera.id;
+
+    const previewId = `camera-preview-${camera.id}`;
+
     card.innerHTML = `
         <div class="camera-header">
             <span class="camera-name">${camera.name}</span>
-            <span class="camera-status ${camera.status}">●</span>
+            <div class="camera-controls">
+                <span class="camera-status ${camera.status}">●</span>
+                <button class="btn-icon-small" onclick="removeCamera(${camera.id})" title="Remover">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
         </div>
-        <div class="camera-preview">
-            <div class="camera-placeholder">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
-                    <circle cx="12" cy="13" r="4"></circle>
-                </svg>
-                <p>${camera.type === 'device' ? 'Câmera Física' : 'Câmera IP'}</p>
+        <div class="camera-preview" id="${previewId}">
+            ${camera.type === 'device' ?
+            `<video id="video-${camera.id}" autoplay playsinline muted></video>` :
+            `<img id="img-${camera.id}" alt="${camera.name}" />`
+        }
+            <div class="camera-loading">
+                <div class="loader"></div>
+                <p>Conectando...</p>
             </div>
         </div>
         <div class="camera-footer">
-            <span>${camera.type === 'device' ? 'Dispositivo Local' : camera.type.toUpperCase()}</span>
-            <span class="timestamp">Agora</span>
+            <span>${camera.type === 'device' ? 'Dispositivo Local' : camera.protocol?.toUpperCase() || 'IP'}</span>
+            <span class="timestamp" id="timestamp-${camera.id}">Carregando...</span>
         </div>
     `;
+
+    // Iniciar stream da câmera após adicionar ao DOM
+    setTimeout(() => startCameraStream(camera), 100);
+
     return card;
+}
+
+// Iniciar stream de vídeo da câmera
+async function startCameraStream(camera) {
+    const previewElement = document.getElementById(`camera-preview-${camera.id}`);
+    const loadingElement = previewElement?.querySelector('.camera-loading');
+
+    try {
+        if (camera.type === 'device') {
+            // Câmera local (webcam/USB)
+            await startLocalCamera(camera);
+        } else {
+            // Câmera IP
+            await startIPCamera(camera);
+        }
+
+        // Remover loading
+        if (loadingElement) {
+            loadingElement.style.display = 'none';
+        }
+
+        // Atualizar timestamp
+        updateTimestamp(camera.id);
+
+    } catch (error) {
+        console.error(`Erro ao iniciar câmera ${camera.name}:`, error);
+
+        if (loadingElement) {
+            loadingElement.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="15" y1="9" x2="9" y2="15"></line>
+                    <line x1="9" y1="9" x2="15" y2="15"></line>
+                </svg>
+                <p>Erro ao conectar</p>
+                <small>${error.message}</small>
+            `;
+        }
+
+        updateCameraStatus(camera.id, 'offline');
+    }
+}
+
+// Iniciar câmera local (webcam/USB)
+async function startLocalCamera(camera) {
+    const videoElement = document.getElementById(`video-${camera.id}`);
+    if (!videoElement) return;
+
+    try {
+        // Solicitar acesso à câmera
+        const constraints = {
+            video: {
+                deviceId: camera.deviceId ? { exact: camera.deviceId } : undefined,
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            },
+            audio: false
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        videoElement.srcObject = stream;
+
+        // Salvar stream para poder parar depois
+        camera.stream = stream;
+
+        updateCameraStatus(camera.id, 'online');
+
+    } catch (error) {
+        throw new Error(`Acesso negado ou câmera não disponível: ${error.message}`);
+    }
+}
+
+// Iniciar câmera IP
+async function startIPCamera(camera) {
+    const imgElement = document.getElementById(`img-${camera.id}`);
+    if (!imgElement) return;
+
+    // Para câmeras IP, vamos usar MJPEG stream ou snapshots
+    if (camera.protocol === 'rtsp') {
+        // RTSP precisa de um servidor intermediário (WebRTC gateway)
+        // Por enquanto, vamos tentar snapshot
+        await startIPCameraSnapshot(camera, imgElement);
+    } else {
+        // HTTP/MJPEG direto
+        imgElement.src = camera.url;
+        imgElement.onerror = () => {
+            throw new Error('Não foi possível conectar à câmera IP');
+        };
+        imgElement.onload = () => {
+            updateCameraStatus(camera.id, 'online');
+        };
+    }
+}
+
+// Snapshot de câmera IP (para RTSP)
+async function startIPCameraSnapshot(camera, imgElement) {
+    // Tentar URLs comuns de snapshot
+    const snapshotUrls = [
+        `http://${camera.ip}:${camera.port}/snapshot.jpg`,
+        `http://${camera.ip}:${camera.port}/cgi-bin/snapshot.cgi`,
+        `http://${camera.ip}:${camera.port}/image/jpeg.cgi`,
+        `http://${camera.ip}:${camera.port}/onvif/snapshot`,
+        `http://${camera.ip}/snapshot.jpg`
+    ];
+
+    let connected = false;
+
+    for (const url of snapshotUrls) {
+        try {
+            const response = await fetch(url, { mode: 'no-cors' });
+            imgElement.src = url;
+            connected = true;
+
+            // Atualizar snapshot a cada 1 segundo
+            camera.snapshotInterval = setInterval(() => {
+                imgElement.src = url + '?t=' + Date.now();
+            }, 1000);
+
+            updateCameraStatus(camera.id, 'online');
+            break;
+        } catch (error) {
+            continue;
+        }
+    }
+
+    if (!connected) {
+        throw new Error('Não foi possível obter snapshot da câmera');
+    }
 }
 
 function setGrid(size) {
