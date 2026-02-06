@@ -1,0 +1,27 @@
+# Smart Monitor AI
+
+Sistema de Monitoramento Inteligente Multiplataforma com IA
+
+## Arquivos Gerados
+
+Este projeto Flutter foi gerado automaticamente com a seguinte estrutura:
+
+### Dependências Principais
+- `camera`: Acesso às câmeras do dispositivo
+- `google_generative_ai`: Integração com Google Gemini
+- `flutter_tts`: Text-to-Speech
+- `speech_to_text`: Reconhecimento de voz
+- `provider`: Gerenciamento de estado
+- `flutter_vlc_player`: Player para streams RTSP/HTTP
+
+### Estrutura
+```
+lib/
+├── main.dart
+├── models/
+├── providers/
+├── screens/
+└── widgets/
+```
+
+Consulte o README.md para instruções completas de instalação e uso.

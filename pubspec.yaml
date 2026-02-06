@@ -1,0 +1,57 @@
+name: smart_monitor
+description: Sistema de Monitoramento Inteligente Multiplataforma com IA
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  # Gerenciamento de Estado
+  provider: ^6.1.1
+  
+  # Câmera e Mídia
+  camera: ^0.10.5+5
+  image_picker: ^1.0.4
+  
+  # IA - Google Gemini
+  google_generative_ai: ^0.2.1
+  
+  # Voz e Áudio
+  flutter_tts: ^3.8.3
+  speech_to_text: ^6.5.1
+  permission_handler: ^11.0.1
+  
+  # Rede e Streaming (para câmeras IP)
+  http: ^1.1.0
+  web_socket_channel: ^2.4.0
+  flutter_vlc_player: ^7.4.0
+  
+  # UI e Layout
+  cupertino_icons: ^1.0.6
+  flutter_staggered_grid_view: ^0.7.0
+  
+  # Firebase (Opcional para logs)
+  firebase_core: ^2.24.2
+  firebase_auth: ^4.15.3
+  cloud_firestore: ^4.13.6
+  
+  # Utilitários
+  intl: ^0.18.1
+  uuid: ^4.2.1
+  shared_preferences: ^2.2.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
